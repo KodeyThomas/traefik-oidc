@@ -5,7 +5,7 @@ displayName: OIDC Authentication Plugin
 type: middleware
 
 # The import path of your plugin.
-import: github.com/kodeythomas/traefik-oidc
+import: github.com/KodeyThomas/traefik-oidc
 
 # A brief description of what your plugin is doing.
 summary: "A traefik Plugin demonstrating OIDC Authentication"
