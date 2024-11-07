@@ -8,7 +8,7 @@ type: middleware
 import: github.com/kodeythomas/traefik-oidc
 
 # A brief description of what your plugin is doing.
-summary: "A traefik Plugin for securing the upstream service with OpenID Connect using the Relying Party Flow."
+summary: "A traefik Plugin demonstrating OIDC Authentication"
 
 # Medias associated to the plugin (optional)
 iconPath: .assets/icon.png
