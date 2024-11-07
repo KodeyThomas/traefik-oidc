@@ -15,7 +15,7 @@ api:
 experimental:
   localPlugins:
     traefik-oidc:
-      moduleName: github.com/kodeythomas/traefik-oidc
+      moduleName: github.com/KodeyThomas/traefik-oidc
 
 providers:
   file:

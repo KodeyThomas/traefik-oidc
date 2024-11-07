@@ -1,4 +1,4 @@
-module github.com/kodeythomas/traefik-oidc
+module github.com/KodeyThomas/traefik-oidc
 
 go 1.23.2
 
