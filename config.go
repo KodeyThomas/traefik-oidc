@@ -1,0 +1,188 @@
+package traefik_oidc
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"os"
+	"strings"
+)
+
+const (
+	LogLevelDebug string = "DEBUG"
+	LogLevelInfo  string = "INFO"
+	LogLevelWarn  string = "WARN"
+	LogLevelError string = "ERROR"
+)
+
+type Config struct {
+	LogLevel string `json:"log_level"`
+
+	Secret string `json:"secret"`
+
+	Provider *ProviderConfig `json:"provider"`
+	Scopes   []string        `json:"scopes"`
+
+	CallbackUri string `json:"callback_uri"`
+
+	// The URL used to start authorization when needed.
+	// All other requests that are not already authorized will return a 401 Unauthorized.
+	// When left empty, all requests can start authorization.
+	LoginUri              string `json:"login_uri"`
+	PostLoginRedirectUri  string `json:"post_login_redirect_uri"`
+	LogoutUri             string `json:"logout_uri"`
+	PostLogoutRedirectUri string `json:"post_logout_redirect_uri"`
+
+	StateCookie *StateCookieConfig `json:"state_cookie"`
+
+	Authorization *AuthorizationConfig `json:"authorization"`
+
+	Headers *HeadersConfig `json:"headers"`
+}
+
+type ProviderConfig struct {
+	Url    string `json:"url"`
+	UrlEnv string `json:"url_env"`
+
+	ClientId        string `json:"client_id"`
+	ClientIdEnv     string `json:"client_id_env"`
+	ClientSecret    string `json:"client_secret"`
+	ClientSecretEnv string `json:"client_secret_env"`
+
+	UsePkce    bool `json:"use_pkce"`
+	UseIdToken bool `json:"use_id_token"`
+
+	ValidateAudience bool   `json:"validate_audience"`
+	ValidAudience    string `json:"valid_audience"`
+	ValidAudienceEnv string `json:"valid_audience_env"`
+
+	ValidateIssuer bool   `json:"validate_issuer"`
+	ValidIssuer    string `json:"valid_issuer"`
+	ValidIssuerEnv string `json:"valid_issuer_env"`
+}
+
+type StateCookieConfig struct {
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Secure   bool   `json:"secure"`
+	HttpOnly bool   `json:"http_only"`
+	SameSite string `json:"same_site"`
+}
+
+type AuthorizationConfig struct {
+	AssertClaims []ClaimAssertion `json:"assert_claims"`
+}
+
+type ClaimAssertion struct {
+	Name  string   `json:"name"`
+	AnyOf []string `json:"anyOf"`
+	AllOf []string `json:"allOf"`
+}
+
+type HeadersConfig struct {
+	MapClaims []ClaimHeaderConfig `json:"map_claims"`
+}
+
+type ClaimHeaderConfig struct {
+	Claim  string `json:"claim"`
+	Header string `json:"header"`
+}
+
+// Will be called by traefik
+func CreateConfig() *Config {
+	return &Config{
+		LogLevel: LogLevelError,
+		Secret:   "MLFs4TT99kOOq8h3UAVRtYoCTDYXiRcZ",
+		Provider: &ProviderConfig{
+			ValidateIssuer:   true,
+			ValidateAudience: true,
+		},
+		// Note: It looks like we're not allowed to specify a default value for arrays here.
+		// Maybe a traefik bug. So I've moved this to the New() method.
+		//Scopes:                []string{"openid", "profile", "email"},
+		CallbackUri:           "/oidc/callback",
+		LogoutUri:             "/logout",
+		PostLogoutRedirectUri: "/",
+		StateCookie: &StateCookieConfig{
+			Name:     "Authorization",
+			Path:     "/",
+			Secure:   true,
+			HttpOnly: true,
+			SameSite: "default",
+		},
+		Authorization: &AuthorizationConfig{},
+		Headers:       &HeadersConfig{},
+	}
+}
+
+// Will be called by traefik
+func New(uctx context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
+	log(config.LogLevel, LogLevelInfo, "Loading Configuration...")
+
+	if config.Provider == nil {
+		return nil, errors.New("missing provider configuration")
+	}
+
+	// Hack: Trick to traefik plugin catalog to successfully execute this method with the testData from .traefik.yml.
+	if config.Provider.Url == "https://..." {
+		return &TraefikOidcAuth{
+			next: next,
+		}, nil
+	}
+
+	if config.Provider.Url == "" && config.Provider.UrlEnv != "" {
+		config.Provider.Url = os.Getenv(config.Provider.UrlEnv)
+	}
+	if config.Provider.ClientId == "" && config.Provider.ClientIdEnv != "" {
+		config.Provider.ClientId = os.Getenv(config.Provider.ClientIdEnv)
+	}
+	if config.Provider.ClientSecret == "" && config.Provider.ClientSecretEnv != "" {
+		config.Provider.ClientSecret = os.Getenv(config.Provider.ClientSecretEnv)
+	}
+	if config.Provider.ValidIssuer == "" && config.Provider.ValidIssuerEnv != "" {
+		config.Provider.ValidIssuer = os.Getenv(config.Provider.ValidIssuerEnv)
+	}
+	if config.Provider.ValidAudience == "" && config.Provider.ValidAudienceEnv != "" {
+		config.Provider.ValidAudience = os.Getenv(config.Provider.ValidAudienceEnv)
+	}
+
+	// Specify default scopes if not provided
+	if config.Scopes == nil || len(config.Scopes) == 0 {
+		config.Scopes = []string{"openid", "profile", "email"}
+	}
+
+	parsedURL, err := parseUrl(config.Provider.Url)
+	if err != nil {
+		log(config.LogLevel, LogLevelError, "Error while parsing Provider.Url: %s", err.Error())
+		return nil, err
+	}
+
+	oidcDiscoveryDocument, err := GetOidcDiscovery(config.LogLevel, parsedURL)
+	if err != nil {
+		log(config.LogLevel, LogLevelError, "Error while retrieving discovery document: %s", err.Error())
+		return nil, err
+	}
+
+	// Apply defaults
+	if config.Provider.ValidIssuer == "" {
+		config.Provider.ValidIssuer = oidcDiscoveryDocument.Issuer
+	}
+	if config.Provider.ValidAudience == "" {
+		config.Provider.ValidAudience = config.Provider.ClientId
+	}
+
+	log(config.LogLevel, LogLevelInfo, "OIDC Discovery successfull. AuthEndPoint: %s", oidcDiscoveryDocument.AuthorizationEndpoint)
+
+	log(config.LogLevel, LogLevelInfo, "Configuration loaded. Provider Url: %v", parsedURL)
+	log(config.LogLevel, LogLevelDebug, "Scopes: %s", strings.Join(config.Scopes, ", "))
+
+	return &TraefikOidcAuth{
+		next:              next,
+		ProviderURL:       parsedURL,
+		Config:            config,
+		DiscoveryDocument: oidcDiscoveryDocument,
+		Jwks: &JwksHandler{
+			Url: oidcDiscoveryDocument.JWKSURI,
+		},
+	}, nil
+}

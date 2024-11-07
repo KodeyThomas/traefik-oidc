@@ -1,0 +1,41 @@
+http:
+  services:
+    whoami:
+      loadBalancer:
+        servers:
+          - url: http://whoami:80
+
+  middlewares:
+    oidc-auth:
+      plugin:
+        traefik-oidc-auth:
+          LogLevel: DEBUG
+          Provider:
+            UrlEnv: "PROVIDER_URL"
+            ClientIdEnv: "CLIENT_ID"
+            ClientSecretEnv: "CLIENT_SECRET"
+            UsePkce: true
+            #ValidAudience: "280538749656466235"
+          Scopes: ["openid", "profile", "email"]
+          Headers:
+            MapClaims:
+              - Claim: "preferred_username"
+                Header: "X-Oidc-Username"
+              - Claim: "sub"
+                Header: "X-Oidc-Subject"
+          # Authorization:
+          #   AssertClaims:
+          #     - Name: roles
+          #       AnyOf: ["admin", "media"]
+          #     - Name: some.nested.key
+          #       AnyOf: ["some value"]
+          # If set, only the /login endpoint will initiate the login flow
+          #LoginUri: "/login"
+          #PostLoginRedirectUri: "/"
+
+  routers:
+    whoami:
+      entryPoints: ["web"]
+      rule: "HostRegexp(`.+`)"
+      service: whoami
+      middlewares: ["oidc-auth@file"]

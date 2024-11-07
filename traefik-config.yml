@@ -1,0 +1,26 @@
+global:
+  checkNewVersion: true
+  sendAnonymousUsage: true
+
+entryPoints:
+  web:
+    address: :80
+
+# Enable API and dashboard
+api:
+  insecure: true
+  dashboard: true
+  debug: true
+
+experimental:
+  localPlugins:
+    traefik-oidc:
+      moduleName: github.com/kodeythomas/traefik-oidc
+
+providers:
+  file:
+    filename: /etc/traefik/configs/http.yml
+    watch: true
+  # docker:
+  #   endpoint: "unix:///var/run/docker.sock"
+  #   exposedByDefault: false
